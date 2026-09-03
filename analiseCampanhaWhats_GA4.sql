@@ -1,6 +1,7 @@
 
 -- exemplo de codigo de como fazer uma analise limpa para mensurar uma campanha com regra de atraibuição de 7 dias após um disparo de mensagem CRM
 -- Num BI poderiamos ver todo funil desde msg até a conversão
+-- ferramenta de analise utiliza : MotherDuck
 
 CREATE OR REPLACE VIEW base_consolidada as
 WITH base_whats as (
