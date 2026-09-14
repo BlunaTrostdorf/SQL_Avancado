@@ -3,83 +3,39 @@
 -- Num BI poderiamos ver todo funil desde msg até a conversão
 -- ferramenta de analise utiliza : MotherDuck
 
-CREATE OR REPLACE VIEW base_consolidada as
-WITH base_whats as (
-SELECT
-  cliente_id,
-  event_timestamp,
-  DATE(event_timestamp) AS data_whats,
-  
-  -- Flags individuais para cada evento
-  CASE WHEN status_sent = 'sent' THEN 1 ELSE 0 END AS msg_enviada,
-  CASE WHEN status_delivered = 'delivered' THEN 1 ELSE 0 END AS msg_entregue
-  
- 
-FROM my_db.main.base_whatsapp_jornada
+
+------------------------------------------------
+WITH WhatsTratado AS (
+    -- Filtra apenas quem clicou no link da oferta no WhatsApp
+    SELECT 
+        id_cliente,
+        MIN(data_hora) AS data_clique_whats
+    FROM base_whatsapp_tratada
+    WHERE disparo_campanha = 'Oferta_Cartao_Nov'
+      AND evento_whatsapp = 'clique_link'
+    GROUP BY id_cliente
 ),
 
-base_resumo_whats as (
-SELECT
-  cliente_id,
-  data_whats,
-  SUM(msg_enviada) AS qnt_msg_enviada,
-  SUM(msg_entregue)AS qnt_msg_entregue
-  
-  from base_whats
-  GROUP BY cliente_id,data_whats
-
-),
-
-base_ga4 AS (
-    SELECT
-        cliente_id,
-        DATE(event_timestamp) AS data_ga4,
-        produto,
-        
-
-        COUNT(*) AS qnt_eventos,
-
-        COUNT(
-            CASE WHEN event_name = 'app_open' THEN 1 END
-        ) AS abertura_app,
-
-        COUNT(
-            CASE WHEN event_name = 'simulacao' THEN 1 END
-        ) AS simulacoes,
-
-        COUNT(
-            CASE WHEN event_name = 'contratacao' THEN 1 END
-        ) AS contratacoes
-
-    FROM my_db.main.base_ga_jornada
-
-    WHERE produto = 'Imobiliário'
-
-    GROUP BY
-        cliente_id,
-        DATE(event_timestamp),
-        produto
-        
-),
-
-base_consolidada as (
-SELECT
-wa.cliente_id,
-wa.data_whats,
-wa.qnt_msg_enviada,
-wa.qnt_msg_entregue,
-ga.data_ga4,
-ga.produto,
-ga.qnt_eventos,
-ga.abertura_app,
-ga.simulacoes,
-ga.contratacoes
-FROM base_resumo_whats wa 
-left join base_ga4 ga 
-on wa.cliente_id = ga.cliente_id
-AND ga.data_ga4 BETWEEN wa.data_whats
-                    AND DATE_ADD(wa.data_whats, INTERVAL 7 DAY)
-
+NavegacaoGA4 AS (
+    -- Pega quem esteve no site vindo do WhatsApp no GA4
+    SELECT DISTINCT
+        user_id, -- ID do cliente no GA4
+        MAX(CASE WHEN event_name = 'proposta_concluida' THEN 1 ELSE 0 END) AS converteu_site
+    FROM `seu-projeto.ga4.events_*`
+    WHERE (SELECT value.string_value FROM UNNEST(event_params) WHERE key = 'source') = 'whatsapp'
+    GROUP BY user_id
 )
-select * from base_consolidada
+
+-- Cruzamento Final: Tabela de WhatsApp com GA4
+SELECT 
+    w.id_cliente,
+    w.data_clique_whats,
+    COALESCE(g.converteu_site, 0) AS converteu_site,
+    CASE 
+        WHEN g.converteu_site = 1 THEN 'Convertido'
+        ELSE 'Abandonou no Site'
+    END AS status_jornada
+FROM WhatsTratado w
+LEFT JOIN NavegacaoGA4 g
+    ON w.id_cliente = g.user_id;
 
